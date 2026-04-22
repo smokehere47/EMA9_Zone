@@ -1,200 +1,127 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EMA 9 Zone</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-<link rel="stylesheet" href="/static/css/style.css">
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EMA9 Zone — Trading Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-
-<!-- ══════════════════════════════════════════════════════════════════════════
-     TOP TOOLBAR
-══════════════════════════════════════════════════════════════════════════ -->
-<header class="topbar">
-  <div class="topbar-left">
+<div id="app">
+  <header class="top-bar">
     <div class="brand">
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-        <polygon points="11,2 20,7 20,15 11,20 2,15 2,7" fill="none" stroke="#2962ff" stroke-width="1.8"/>
-        <text x="11" y="15" text-anchor="middle" fill="#2962ff" font-size="9" font-family="Inter" font-weight="700">9</text>
-      </svg>
-      <span class="brand-text">EMA<span class="brand-accent">9</span></span>
+      <span class="brand-icon">◈</span>
+      <span class="brand-name">EMA9<span class="brand-accent">Zone</span></span>
     </div>
-    <div class="vdiv"></div>
-    <!-- Symbol pill -->
-    <div class="sym-pill" id="symPill">
-      <span class="sym-name" id="symName">—</span>
-      <span class="sym-exch" id="symExch">NSE</span>
+    <nav class="symbol-bar">
+      <div class="symbol-search">
+        <input type="text" id="symbolInput" placeholder="Search symbol…" autocomplete="off"/>
+        <span class="search-icon">⌕</span>
+      </div>
+      <div class="symbol-tabs" id="symbolTabs"></div>
+    </nav>
+    <div class="top-controls">
+      <div class="tf-group" id="tfGroup"></div>
+      <button class="icon-btn" id="alertsBtn" title="Alerts">🔔<span class="badge" id="alertBadge"></span></button>
+      <div class="connection-dot" id="connDot" title="WebSocket"></div>
     </div>
-    <!-- TF selector -->
-    <div class="tf-group" id="tfGroup">
-      <button class="tf-btn active" data-tf="3">3m</button>
-      <button class="tf-btn" data-tf="5">5m</button>
-      <button class="tf-btn" data-tf="15">15m</button>
-    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar-left">
+      <div class="sidebar-section">
+        <div class="section-label">WATCHLIST</div>
+        <div id="watchlist" class="watchlist"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="section-label">SIGNALS</div>
+        <div id="signalLog" class="signal-log"></div>
+      </div>
+    </aside>
+
+    <main class="chart-area">
+      <div class="chart-header">
+        <div class="chart-symbol-info">
+          <span class="cs-symbol" id="csSymbol">—</span>
+          <span class="cs-price"  id="csPrice">—</span>
+          <span class="cs-change" id="csChange"></span>
+        </div>
+        <div class="chart-ohlc" id="chartOHLC"></div>
+        <div class="chart-indicators" id="chartIndicators">
+          <span class="ind-tag active" data-ind="EMA 9">EMA 9</span>
+          <span class="ind-tag active" data-ind="EMA 21">EMA 21</span>
+          <span class="ind-tag active" data-ind="VWAP">VWAP</span>
+        </div>
+      </div>
+      <div class="chart-panels">
+        <div id="mainChart" class="main-chart"></div>
+        <div class="chart-resize-handle" id="resizeHandle"></div>
+        <div id="subChart" class="sub-chart"></div>
+      </div>
+      <div class="chart-footer">
+        <div class="footer-stats" id="footerStats"></div>
+      </div>
+    </main>
+
+    <aside class="sidebar-right">
+      <div class="tabs-row">
+        <button class="tab-btn active" data-tab="analysis">Analysis</button>
+        <button class="tab-btn"        data-tab="alerts">Alerts</button>
+        <button class="tab-btn"        data-tab="positions">Positions</button>
+      </div>
+      <div class="tab-panel active" id="tab-analysis">
+        <div class="analysis-card">
+          <div class="card-label">TREND BIAS</div>
+          <div class="trend-meter">
+            <div class="trend-bar"><div class="trend-fill" id="trendFill" style="width:50%"></div></div>
+            <div class="trend-labels"><span>BEAR</span><span>NEUTRAL</span><span>BULL</span></div>
+          </div>
+        </div>
+        <div class="analysis-card">
+          <div class="card-label">EMA STRUCTURE</div>
+          <div id="emaStructure" class="ema-structure"></div>
+        </div>
+        <div class="analysis-card">
+          <div class="card-label">ZONE LEVELS</div>
+          <div id="zoneLevels" class="zone-levels"></div>
+        </div>
+        <div class="analysis-card">
+          <div class="card-label">MARKET STATS</div>
+          <div id="marketStats" class="market-stats-grid"></div>
+        </div>
+      </div>
+      <div class="tab-panel" id="tab-alerts">
+        <div class="alert-form">
+          <select id="alertSymbol"    class="form-select"></select>
+          <select id="alertCondition" class="form-select">
+            <option value="cross_above">Crosses Above</option>
+            <option value="cross_below">Crosses Below</option>
+            <option value="ema_touch">EMA Touch</option>
+            <option value="zone_enter">Zone Entry</option>
+          </select>
+          <input type="number" id="alertPrice" class="form-input" placeholder="Price level…"/>
+          <button class="btn-primary" id="addAlertBtn">+ Add Alert</button>
+        </div>
+        <div id="alertsList" class="alerts-list"></div>
+      </div>
+      <div class="tab-panel" id="tab-positions">
+        <div id="positionsList" class="positions-list"></div>
+        <div class="pnl-summary"  id="pnlSummary"></div>
+      </div>
+    </aside>
   </div>
-
-  <div class="topbar-center">
-    <!-- OHLC strip — crosshair data shows here -->
-    <div class="ohlc-strip" id="ohlcStrip" style="display:none">
-      <span class="ohlc-time" id="xhTime"></span>
-      <span class="ohlc-item">O <span id="xhOpen" class="ohlc-val"></span></span>
-      <span class="ohlc-item">H <span id="xhHigh" class="ohlc-val green"></span></span>
-      <span class="ohlc-item">L <span id="xhLow"  class="ohlc-val red"></span></span>
-      <span class="ohlc-item">C <span id="xhClose" class="ohlc-val"></span></span>
-      <span class="ohlc-sep">│</span>
-      <span class="ohlc-item ema-item">EH <span id="xhEmaH" class="ohlc-val green"></span></span>
-      <span class="ohlc-item ema-item">EL <span id="xhEmaL" class="ohlc-val red"></span></span>
-    </div>
-  </div>
-
-  <div class="topbar-right">
-    <!-- Drawing tools -->
-    <div class="tool-group">
-      <button class="tool-btn active" data-tool="pointer" title="Pointer [Esc]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 4-5 1-3 5z" fill="currentColor"/></svg>
-      </button>
-      <button class="tool-btn" data-tool="hline"  title="Horizontal Line [H]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/></svg>
-      </button>
-      <button class="tool-btn" data-tool="vline"  title="Vertical Line [V]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/></svg>
-      </button>
-      <button class="tool-btn" data-tool="hray"   title="Horizontal Ray [Y]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5"/><polygon points="11,5 13,7 11,9" fill="currentColor"/></svg>
-      </button>
-      <button class="tool-btn" data-tool="pct"    title="% Measure [M]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><text x="2" y="11" fill="currentColor" font-size="9" font-family="Inter" font-weight="700">%</text></svg>
-      </button>
-    </div>
-    <div class="vdiv"></div>
-    <div class="tool-group">
-      <button class="tool-btn" data-tool="long"   title="Long [L]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><polygon points="7,2 12,10 2,10" fill="#26a69a"/></svg>
-      </button>
-      <button class="tool-btn" data-tool="short"  title="Short [S]">
-        <svg width="14" height="14" viewBox="0 0 14 14"><polygon points="7,12 12,4 2,4" fill="#ef5350"/></svg>
-      </button>
-    </div>
-    <div class="vdiv"></div>
-    <button class="tool-btn danger" id="btnClear" title="Clear All">
-      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-    </button>
-    <div class="vdiv"></div>
-    <button class="icon-btn" id="btnReset" title="Reset Zoom [R]">
-      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 7a5 5 0 1 1 1.5 3.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/><polyline points="1,5 2,7 4,6" fill="currentColor"/></svg>
-    </button>
-    <div class="vdiv"></div>
-    <!-- Stat pills -->
-    <div class="stat-pill"><span class="stat-l">WAVES</span><span class="stat-v" id="waveCount">—</span></div>
-    <div class="stat-pill"><span class="stat-l">BARS</span><span class="stat-v"  id="candleCount">—</span></div>
-    <div class="vdiv"></div>
-    <div class="date-pill" id="dateBadge">—</div>
-  </div>
-</header>
-
-<!-- ══════════════════════════════════════════════════════════════════════════
-     LEFT SIDEBAR — Watchlist
-══════════════════════════════════════════════════════════════════════════ -->
-<aside class="sidebar" id="sidebar">
-  <!-- Search -->
-  <div class="sb-search-wrap">
-    <svg class="sb-search-icon" width="13" height="13" viewBox="0 0 13 13">
-      <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.4" fill="none"/>
-      <line x1="8.5" y1="8.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-    </svg>
-    <input type="text" id="sbSearch" class="sb-search" placeholder="Search symbol…" autocomplete="off" spellcheck="false">
-    <button class="sb-search-clear" id="sbSearchClear" style="display:none">✕</button>
-  </div>
-
-  <!-- Search results (shown when typing) -->
-  <div class="sb-results" id="sbResults" style="display:none"></div>
-
-  <!-- Watchlist tabs -->
-  <div class="wl-tabs" id="wlTabs"></div>
-
-  <!-- Watchlist body -->
-  <div class="wl-body" id="wlBody"></div>
-
-  <!-- Add watchlist button -->
-  <div class="wl-footer">
-    <button class="wl-add-btn" id="btnAddWatchlist">+ New Watchlist</button>
-  </div>
-</aside>
-
-<!-- ══════════════════════════════════════════════════════════════════════════
-     MAIN CHART AREA
-══════════════════════════════════════════════════════════════════════════ -->
-<main class="chart-main">
-  <div id="chartContainer" class="chart-container">
-    <div class="chart-placeholder" id="chartPlaceholder">
-      <svg width="48" height="48" viewBox="0 0 48 48" fill="none" opacity="0.3">
-        <rect x="4" y="28" width="8" height="16" fill="#2962ff"/>
-        <rect x="16" y="18" width="8" height="26" fill="#26a69a"/>
-        <rect x="28" y="10" width="8" height="34" fill="#2962ff"/>
-        <rect x="40" y="22" width="8" height="22" fill="#ef5350"/>
-      </svg>
-      <p id="placeholderText">Select a symbol to begin</p>
-    </div>
-    <svg id="drawingLayer" class="drawing-layer"></svg>
-  </div>
-
-  <!-- % measure tooltip -->
-  <div class="pct-tip" id="pctTip" style="display:none"></div>
-
-  <!-- Signal feed -->
-  <div class="signal-feed" id="signalFeed">
-    <div class="sf-header">SIGNALS</div>
-    <div class="sf-list"  id="sfList"></div>
-  </div>
-</main>
-
-<!-- ══════════════════════════════════════════════════════════════════════════
-     WAVE DRAWER (right slide-in)
-══════════════════════════════════════════════════════════════════════════ -->
-<aside class="wave-drawer" id="waveDrawer">
-  <div class="wd-header">
-    <span class="wd-title">WAVE ANALYSIS</span>
-    <button class="wd-close" id="wdClose">✕</button>
-  </div>
-  <div class="wd-sym" id="wdSym">—</div>
-  <div class="wd-list" id="wdList"></div>
-</aside>
-
-<!-- ══════════════════════════════════════════════════════════════════════════
-     POSITION DIALOG
-══════════════════════════════════════════════════════════════════════════ -->
-<div class="dialog-backdrop" id="dialogBackdrop" style="display:none">
-  <div class="dialog">
-    <div class="dialog-header">
-      <span id="dialogTitle">LONG POSITION</span>
-      <button id="dialogClose">✕</button>
-    </div>
-    <div class="dialog-body">
-      <label>Entry Price<input type="number" id="pdEntry" step="0.05" placeholder="0.00"></label>
-      <label>Stop Loss<input  type="number" id="pdStop"  step="0.05" placeholder="0.00"></label>
-      <label>Target<input    type="number" id="pdTarget" step="0.05" placeholder="0.00"></label>
-      <label>Note<input      type="text"   id="pdNote"  placeholder="Optional"></label>
-      <button class="dialog-submit" id="pdSubmit">ADD TO CHART</button>
-    </div>
-  </div>
+  <div class="toast-container" id="toastContainer"></div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     WAVE CHIP RAIL (bottom)
-══════════════════════════════════════════════════════════════════════════ -->
-<div class="wave-rail" id="waveRail">
-  <span class="wr-label">WAVES</span>
-  <div class="wr-chips" id="wrChips"></div>
-</div>
-
-<!-- Toast -->
-<div class="toast" id="toast"></div>
-
-<script src="/static/js/chart.js"></script>
+<script src="{{ url_for('static', filename='js/wsManager.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dataStore.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chartEngine.js') }}"></script>
+<script src="{{ url_for('static', filename='js/signalRenderer.js') }}"></script>
+<script src="{{ url_for('static', filename='js/alertSystem.js') }}"></script>
+<script src="{{ url_for('static', filename='js/analysisPanel.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
