@@ -80,6 +80,8 @@ const App = (() => {
       ChartEngine.setRawMarkers(d.markers);
     }
 
+    _updateTrend(d.symbol, tf);
+
     SignalRenderer.renderLog();
   }
 
@@ -89,6 +91,10 @@ const App = (() => {
       ChartEngine.updateTick(d.symbol, {
         time: d.time, open: d.o, high: d.h, low: d.l, close: d.c, volume: d.v
       });
+
+      if (d.symbol === AppState.activeSymbol) {
+        _updateTrend(d.symbol, AppState.activeTf);
+      }
     }
     WatchlistComponent.render();
   }
@@ -134,6 +140,15 @@ const App = (() => {
         ema9: d.ema9, ema21: d.ema21, vwap: d.vwap,
       });
     }
+  }
+
+  // ── Update trend badge ─────────────────────────────────────────────────────
+  function _updateTrend(symbol, tf) {
+    const badge = document.getElementById('trendBadge');
+    if (!badge) return;
+    const t = DataStore.detectTrend(symbol, tf);
+    badge.textContent = `${t.emoji} ${t.label}`;
+    badge.className   = 'trend-badge trend-' + t.trend.toLowerCase();
   }
 
   // ── Request chart for a symbol ─────────────────────────────────────────────

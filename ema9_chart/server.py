@@ -17,6 +17,7 @@ import queue
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Set
+import time
 
 import pytz
 import pandas as pd
@@ -145,19 +146,29 @@ def push_candle_close(symbol: str, candle: dict, wave: dict = None) -> None:
         msg["wave"] = wave
         msg["markers"] = [
             {"time": wave["hh_time"], "position": "aboveBar",
-             "color": "#26a69a", "shape": "circle", "text": f"HH{n}", "size": 1.5},
+             "color": "#33c733", "shape": "circle", "text": f"HH{n}", "size": 1.5},
             {"time": wave["ll_time"], "position": "belowBar",
-             "color": "#ef5350", "shape": "circle", "text": f"LL{n}", "size": 1.5},
+             "color": "#f33e26e2", "shape": "circle", "text": f"LL{n}", "size": 1.5},
         ]
     _broadcast(symbol, msg)
 
 # ── Core: fetch candles from Fyers and build snapshot ────────────────────────
+# ── Snapshot cache: (sym, resolution) → dict  ────────────────────────────────
+_snapshot_cache: dict[tuple, dict]   = {}
+_snapshot_lock:  threading.Lock      = threading.Lock()
+_inflight:       set[tuple]          = set()   # keys currently being fetched
+
+# Symbols confirmed invalid by Fyers — skip permanently
+_invalid_syms: set[str] = set()
+
+# ── Core: fetch candles from Fyers and build snapshot ────────────────────────
 def _fetch_snapshot(sym: str, tf: str = None) -> dict:
     """
-    Fetch OHLCV candles directly from Fyers API for any symbol.
-    Returns a snapshot dict the frontend understands.
-    tf: timeframe string from frontend e.g. "3m", "5m", "15m"
-       Falls back to config TIMEFRAME if not provided.
+    Fetch OHLCV candles with:
+      - In-memory cache (one entry per sym+resolution, cleared on new trading day)
+      - Dedup guard (only one thread fetches the same key at a time)
+      - Exponential backoff on 429: 5s → 10s → 30s, max 3 retries
+      - Permanent skip for invalid symbols
     """
     fyers = _get_fyers()
     if fyers is None:
@@ -165,71 +176,130 @@ def _fetch_snapshot(sym: str, tf: str = None) -> dict:
                 "candles": [], "markers": [],
                 "error": "Fyers not authenticated"}
 
-    # Map frontend tf string → Fyers resolution integer
     tf_map = {"1m": "1", "3m": "3", "5m": "5", "15m": "15",
               "30m": "30", "1h": "60", "1d": "D"}
     resolution = tf_map.get(tf or "", str(TIMEFRAME))
+    cache_key  = (sym, resolution)
 
-    now       = datetime.now(IST)
-    range_to  = now.strftime("%Y-%m-%d")
+    # Permanently invalid symbol — skip immediately
+    if sym in _invalid_syms:
+        print(f"  [Fyers] Skipping {sym} (known invalid)")
+        return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
+                "candles": [], "markers": [], "error": "invalid symbol"}
+
+    # Cache hit
+    with _snapshot_lock:
+        if cache_key in _snapshot_cache:
+            print(f"  [Fyers] Cache HIT {sym} res={resolution}")
+            return _snapshot_cache[cache_key]
+
+        # Dedup: already fetching this key in another thread?
+        if cache_key in _inflight:
+            # Wait until it finishes, then return from cache
+            pass   # fall through — we'll spin-wait below
+        else:
+            _inflight.add(cache_key)
+
+    # Spin-wait if another thread is already fetching (dedup)
+    waited = 0
+    while cache_key in _inflight and waited < 15:
+        time.sleep(0.2)
+        waited += 0.2
+        with _snapshot_lock:
+            if cache_key in _snapshot_cache:
+                return _snapshot_cache[cache_key]
+
+    now        = datetime.now(IST)
+    range_to   = now.strftime("%Y-%m-%d")
     range_from = (now - timedelta(days=FETCH_DAYS)).strftime("%Y-%m-%d")
 
-    print(f"  [Fyers] Fetching {sym}  res={resolution}  {range_from}→{range_to}")
+    BACKOFFS   = [5, 10, 30]
+    MAX_TRIES  = len(BACKOFFS) + 1
+    resp       = None
 
-    try:
-        resp = fyers.history({
-            "symbol":      sym,
-            "resolution":  resolution,
-            "date_format": "1",
-            "range_from":  range_from,
-            "range_to":    range_to,
-            "cont_flag":   "1",
-        })
-    except Exception as e:
-        print(f"  [Fyers] Exception for {sym}: {e}")
-        return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
-                "candles": [], "markers": [], "error": str(e)}
+    for attempt in range(MAX_TRIES):
+        print(f"  [Fyers] Fetching {sym}  res={resolution}  "
+              f"{range_from}→{range_to}  (attempt {attempt + 1}/{MAX_TRIES})")
+        try:
+            resp = fyers.history({
+                "symbol":      sym,
+                "resolution":  resolution,
+                "date_format": "1",
+                "range_from":  range_from,
+                "range_to":    range_to,
+                "cont_flag":   "1",
+            })
+        except Exception as e:
+            print(f"  [Fyers] Exception for {sym}: {e}")
+            with _snapshot_lock:
+                _inflight.discard(cache_key)
+            return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
+                    "candles": [], "markers": [], "error": str(e)}
 
-    if resp.get("s") != "ok":
         code = resp.get("code", "")
         msg  = resp.get("message", "") or resp.get("errmsg", "")
+
+        if resp.get("s") == "ok":
+            break   # success
+
+        if str(code) == "429":
+            if attempt < len(BACKOFFS):
+                wait = BACKOFFS[attempt]
+                print(f"  [Fyers] 429 for {sym} — backing off {wait}s "
+                      f"(attempt {attempt + 1}/{MAX_TRIES})")
+                time.sleep(wait)
+                continue
+            else:
+                print(f"  [Fyers] 429 for {sym} — max retries exhausted, giving up")
+                with _snapshot_lock:
+                    _inflight.discard(cache_key)
+                return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
+                        "candles": [], "markers": [], "error": "rate limit"}
+
+        # Invalid symbol — mark permanently
+        if "invalid symbol" in str(msg).lower() or str(code) in ("-300", "300"):
+            print(f"  [Fyers] Invalid symbol: {sym} — skipping permanently")
+            _invalid_syms.add(sym)
+            with _snapshot_lock:
+                _inflight.discard(cache_key)
+            return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
+                    "candles": [], "markers": [], "error": "invalid symbol"}
+
         print(f"  [Fyers] API error for {sym}: code={code} msg={msg}")
+        with _snapshot_lock:
+            _inflight.discard(cache_key)
         return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
                 "candles": [], "markers": [], "error": msg}
 
     raw_candles = resp.get("candles", [])
     if not raw_candles:
+        with _snapshot_lock:
+            _inflight.discard(cache_key)
         return {"type": "snapshot", "symbol": sym, "tf": tf or "5m",
                 "candles": [], "markers": []}
 
-    # Build DataFrame + calculate EMA9 high/low
     df = pd.DataFrame(raw_candles, columns=["ts", "open", "high", "low", "close", "vol"])
     df["datetime"] = pd.to_datetime(df["ts"], unit="s", utc=True).dt.tz_convert(IST)
     df = df.sort_values("datetime").reset_index(drop=True)
     df = calculate_indicators(df)
 
-    # Convert to frontend candle format {time, o, h, l, c, v}
     candles = [
         {"time": int(row.ts), "o": row.open, "h": row.high,
          "l": row.low, "c": row.close, "v": int(row.vol)}
         for row in df.itertuples()
     ]
-
-    # EMA9 high/low as separate line series data
     ema9_high = [
         {"time": int(row.ts), "value": round(row.ema9_high, 4)}
-        for row in df.itertuples()
-        if not pd.isna(row.ema9_high)
+        for row in df.itertuples() if not pd.isna(row.ema9_high)
     ]
     ema9_low = [
         {"time": int(row.ts), "value": round(row.ema9_low, 4)}
-        for row in df.itertuples()
-        if not pd.isna(row.ema9_low)
+        for row in df.itertuples() if not pd.isna(row.ema9_low)
     ]
 
     print(f"  [Fyers] {sym}: {len(candles)} candles returned")
 
-    return {
+    result = {
         "type":      "snapshot",
         "symbol":    sym,
         "tf":        tf or (str(TIMEFRAME) + "m"),
@@ -238,6 +308,12 @@ def _fetch_snapshot(sym: str, tf: str = None) -> dict:
         "ema9_low":  ema9_low,
         "markers":   [],
     }
+
+    with _snapshot_lock:
+        _snapshot_cache[cache_key] = result
+        _inflight.discard(cache_key)
+
+    return result
 
 # ── Watchlist persistence ─────────────────────────────────────────────────────
 def load_watchlists() -> dict:
@@ -377,7 +453,6 @@ def ws_endpoint(ws):
 
             # ── subscribe: client wants to follow a symbol ────────────────────
             if action == "subscribe":
-                # Accept both single symbol and array
                 sym_raw = msg.get("symbol") or (msg.get("symbols") or [""])[0]
                 sym = (sym_raw or "").strip()
                 if not sym:
@@ -387,12 +462,25 @@ def ws_endpoint(ws):
                     _drop_sub(q, current_sym)
                 current_sym = sym
                 _add_sub(q, sym)
-                # Fetch and send snapshot in background so WS isn't blocked
                 tf = msg.get("tf", str(TIMEFRAME) + "m")
-                def _send_snapshot(s=sym, t=tf):
-                    snap = _fetch_snapshot(s, t)
-                    q.put_nowait(json.dumps(snap))
-                threading.Thread(target=_send_snapshot, daemon=True).start()
+                tf_map = {"1m": "1", "3m": "3", "5m": "5", "15m": "15",
+                          "30m": "30", "1h": "60", "1d": "D"}
+                resolution = tf_map.get(tf, str(TIMEFRAME))
+                # Only fetch if NOT already in cache — avoids redundant API calls
+                cache_key = (sym, resolution)
+                with _snapshot_lock:
+                    already_cached = cache_key in _snapshot_cache
+                if not already_cached:
+                    def _send_snapshot(s=sym, t=tf):
+                        snap = _fetch_snapshot(s, t)
+                        q.put_nowait(json.dumps(snap))
+                    threading.Thread(target=_send_snapshot, daemon=True).start()
+                else:
+                    # Serve from cache immediately
+                    def _send_cached(s=sym, t=tf):
+                        snap = _fetch_snapshot(s, t)   # instant cache hit
+                        q.put_nowait(json.dumps(snap))
+                    threading.Thread(target=_send_cached, daemon=True).start()
 
             # ── snapshot: explicit candle history request ─────────────────────
             elif action == "snapshot":

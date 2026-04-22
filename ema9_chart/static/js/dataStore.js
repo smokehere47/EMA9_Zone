@@ -15,10 +15,10 @@ const DataStore = (() => {
   const emaData = {};
   // watchlist config
   const watchlist = [
-    { symbol: 'NIFTY50',   name: 'Nifty 50',    exchange: 'NSE' },
-    { symbol: 'BANKNIFTY', name: 'Bank Nifty',   exchange: 'NSE' },
-    { symbol: 'FINNIFTY',  name: 'Fin Nifty',    exchange: 'NSE' },
-    { symbol: 'SENSEX',    name: 'Sensex',        exchange: 'BSE' },
+    { symbol: 'NSE:NIFTY50-INDEX',   name: 'Nifty 50',    exchange: 'NSE' },
+    { symbol: 'NSE:BANKNIFTY-INDEX', name: 'Bank Nifty',  exchange: 'NSE' },
+    { symbol: 'NSE:FINNIFTY-INDEX',  name: 'Fin Nifty',   exchange: 'NSE' },
+    { symbol: 'BSE:SENSEX-INDEX',    name: 'Sensex',       exchange: 'BSE' },
   ];
 
   function _ensureSymbol(sym) {
@@ -116,5 +116,42 @@ const DataStore = (() => {
     }
   }
 
-  return { onTick, onCandle, onSnapshot, onSignal, onEma, getCandles, getTick, getSignals, getAllSignals, getEma, getWatchlist, addWatchlistItem };
+  // ── Wave-based trend detection ────────────────────────────────────────────
+  function detectTrend(symbol, tf) {
+    const bars = getCandles(symbol, tf || AppState.activeTf);
+    if (!bars || bars.length < 4) return { trend: 'SIDEWAYS', emoji: '➡️', label: 'Sideways' };
+
+    // Build simplified wave list from candle data using local highs/lows
+    // We use the last 20 bars and find swing points
+    const slice = bars.slice(-20);
+    const waves = [];
+    for (let i = 1; i < slice.length - 1; i++) {
+      const prev = slice[i - 1], cur = slice[i], next = slice[i + 1];
+      if (cur.high > prev.high && cur.high > next.high) {
+        waves.push({ type: 'HH', val: cur.high });
+      } else if (cur.low < prev.low && cur.low < next.low) {
+        waves.push({ type: 'LL', val: cur.low });
+      }
+    }
+
+    if (waves.length < 3) return { trend: 'SIDEWAYS', emoji: '➡️', label: 'Sideways' };
+
+    // Extract last 3 swing highs and lows
+    const highs = waves.filter(w => w.type === 'HH').map(w => w.val).slice(-3);
+    const lows  = waves.filter(w => w.type === 'LL').map(w => w.val).slice(-3);
+
+    if (highs.length >= 2 && lows.length >= 2) {
+      const higherHighs = highs.every((h, i) => i === 0 || h > highs[i - 1]);
+      const higherLows  = lows.every((l, i)  => i === 0 || l > lows[i - 1]);
+      const lowerHighs  = highs.every((h, i) => i === 0 || h < highs[i - 1]);
+      const lowerLows   = lows.every((l, i)  => i === 0 || l < lows[i - 1]);
+
+      if (higherHighs && higherLows) return { trend: 'UPTREND',   emoji: '🔼', label: 'Uptrend'   };
+      if (lowerHighs  && lowerLows)  return { trend: 'DOWNTREND', emoji: '🔽', label: 'Downtrend' };
+    }
+
+    return { trend: 'SIDEWAYS', emoji: '➡️', label: 'Sideways' };
+  }
+
+  return { onTick, onCandle, onSnapshot, onSignal, onEma, getCandles, getTick, getSignals, getAllSignals, getEma, getWatchlist, addWatchlistItem, detectTrend };
 })();
